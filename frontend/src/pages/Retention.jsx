@@ -13,7 +13,8 @@ export default function Retention() {
     setMsg('')
     try {
       const r = await api.runRetention({ policy_id: Number(policyId), mode })
-      setMsg(`${r.policy} 影响 ${r.affected.length} 条`)
+      const cancelled = r.affected.filter(a => a.cancelled_job_id).length
+      setMsg(`${r.policy} 影响 ${r.affected.length} 条${cancelled ? ` · 取消执行中迁移 ${cancelled} 单` : ''}`)
       reload()
     } catch (e) { setMsg(e.message) }
   }
@@ -32,10 +33,10 @@ export default function Retention() {
       {msg && <p className="msg">{msg}</p>}
       <div className="table-wrap">
         <table>
-          <thead><tr><th>流水</th><th>分区</th><th>策略</th><th>模式</th><th>状态</th><th>时间</th></tr></thead>
+          <thead><tr><th>流水</th><th>分区</th><th>策略</th><th>模式</th><th>状态</th><th>备注</th><th>时间</th></tr></thead>
           <tbody>
             {runs.map(r => (
-              <tr key={r.id}><td>{r.id}</td><td>{r.part_key}</td><td>{r.policy_name}</td><td>{r.mode}</td><td>{r.status}</td><td>{r.created_at}</td></tr>
+              <tr key={r.id}><td>{r.id}</td><td>{r.part_key}</td><td>{r.policy_name}</td><td>{r.mode}</td><td>{r.status}</td><td>{r.note}</td><td>{r.created_at}</td></tr>
             ))}
           </tbody>
         </table>

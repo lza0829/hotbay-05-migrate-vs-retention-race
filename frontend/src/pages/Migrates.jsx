@@ -40,11 +40,11 @@ export default function Migrates() {
       {msg && <p className="msg">{msg}</p>}
       <div className="table-wrap">
         <table>
-          <thead><tr><th>单号</th><th>分区</th><th>从</th><th>到</th><th>状态</th><th>操作</th></tr></thead>
+          <thead><tr><th>单号</th><th>分区</th><th>从</th><th>到</th><th>状态</th><th>备注</th><th>操作</th></tr></thead>
           <tbody>
             {jobs.map(j => (
               <tr key={j.id}>
-                <td>{j.id}</td><td>{j.part_key}</td><td>{j.from_tier}</td><td>{j.to_tier}</td><td>{j.status}</td>
+                <td>{j.id}</td><td>{j.part_key}</td><td>{j.from_tier}</td><td>{j.to_tier}</td><td>{j.status}</td><td>{j.note}</td>
                 <td>{j.status === '执行中' && (
                   <>
                     <button type="button" onClick={() => finish(j.id, true)}>完成</button>

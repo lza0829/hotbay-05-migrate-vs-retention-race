@@ -2,7 +2,13 @@ from __future__ import annotations
 from datetime import date
 from fastapi import HTTPException
 from app.db import db
-from app.services.core import now, partition_row
+from app.services.core import now
+from app.services.migrate import cancel_open_job
+
+# 全局争用口径：保留可取消迁移（保留优先）。
+# 命中在册分区即先取消其执行中迁移单（同事务），再按策略销毁或标过期；
+# 销毁流水备注登记「取消迁移单#J」，迁移单备注回登记「见销毁流水#R」，
+# 双向互链，争用结局可重放；目录与元数据跟销毁结果。
 
 
 def list_policies():
@@ -37,23 +43,38 @@ def run_retention(policy_id: int, mode: str = "连目录销毁"):
             age = (today - date.fromisoformat(p["release_day"])).days
             if age < pol["max_age_days"]:
                 continue
+            # 保留优先：命中即取消执行中迁移单（带守卫的原子认领），同事务再处置。
+            # 认领落空（并发下完成已抢先）则不算取消，销毁照常入账。
+            cancelled = cancel_open_job(conn, p["id"], "保留命中取消")
+            note = f"片龄{age}天"
+            if cancelled:
+                note += f"；取消迁移单#{cancelled}"
             if pol["action"] == "只标过期":
                 conn.execute("UPDATE partitions SET status='已过期' WHERE id=?", (p["id"],))
-                cur = conn.execute(
-                    "INSERT INTO destroy_runs(partition_id, policy_id, mode, status, created_at, note) VALUES (?,?,?,?,?,?)",
-                    (p["id"], policy_id, mode, "已标记过期", now(), f"片龄{age}天"),
-                )
-                done.append({"partition_id": p["id"], "run_id": cur.lastrowid, "status": "已标记过期"})
-                continue
-            clips = conn.execute("SELECT object_key FROM clips WHERE partition_id=?", (p["id"],)).fetchall()
-            if mode == "连目录销毁":
-                for c in clips:
-                    conn.execute("DELETE FROM inventory_objects WHERE object_key=?", (c["object_key"],))
-            conn.execute("DELETE FROM clips WHERE partition_id=?", (p["id"],))
-            conn.execute("UPDATE partitions SET status='已销毁' WHERE id=?", (p["id"],))
+                run_status = "已标记过期"
+            else:
+                clips = conn.execute("SELECT object_key FROM clips WHERE partition_id=?", (p["id"],)).fetchall()
+                if mode == "连目录销毁":
+                    for c in clips:
+                        conn.execute("DELETE FROM inventory_objects WHERE object_key=?", (c["object_key"],))
+                conn.execute("DELETE FROM clips WHERE partition_id=?", (p["id"],))
+                conn.execute("UPDATE partitions SET status='已销毁' WHERE id=?", (p["id"],))
+                run_status = "已销毁"
             cur = conn.execute(
                 "INSERT INTO destroy_runs(partition_id, policy_id, mode, status, created_at, note) VALUES (?,?,?,?,?,?)",
-                (p["id"], policy_id, mode, "已销毁", now(), f"片龄{age}天"),
+                (p["id"], policy_id, mode, run_status, now(), note),
             )
-            done.append({"partition_id": p["id"], "run_id": cur.lastrowid, "status": "已销毁"})
+            run_id = cur.lastrowid
+            if cancelled:
+                conn.execute(
+                    "UPDATE migrate_jobs SET note=? WHERE id=?",
+                    (f"保留命中取消，见销毁流水#{run_id}", cancelled),
+                )
+            done.append({
+                "partition_id": p["id"],
+                "part_key": p["part_key"],
+                "run_id": run_id,
+                "status": run_status,
+                "cancelled_job_id": cancelled,
+            })
         return {"policy": pol["name"], "affected": done}
